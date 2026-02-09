@@ -270,6 +270,28 @@ void *timer_thread(void *timer_param) {
   return NULL;
 }
 
+
+static int process_ioctl_command(int file_fd, char *data, size_t len) {
+#if USE_AESD_CHAR_DEVICE
+  const char *prefix = "AESDCHAR_IOCSEEKTO:";
+  size_t prefix_len = strlen(prefix);
+  
+  if (len >= prefix_len && strncmp(data, prefix, prefix_len) == 0) {
+    unsigned int write_cmd, write_cmd_offset;
+    if (sscanf(data + prefix_len, "%u,%u", &write_cmd, &write_cmd_offset) == 2) {
+      struct aesd_seekto seek_params;
+      seek_params.write_cmd = write_cmd;
+      seek_params.write_cmd_offset = write_cmd_offset;
+      
+      if (ioctl(file_fd, AESDCHAR_IOCSEEKTO, &seek_params) == -1) {
+        syslog(LOG_ERR, "ioctl failed: %s", strerror(errno));
+      }
+      return 1;
+    }
+  }
+#endif
+  return 0;
+}
 void file_write(char *data, int len) {
   pthread_mutex_lock(&file_mutex);
   int file_fd = open(DATA_FILE, O_CREAT | O_WRONLY | O_APPEND, 0644);

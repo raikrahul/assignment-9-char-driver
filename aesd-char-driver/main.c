@@ -406,3 +406,160 @@ void aesd_cleanup_module(void)
 
 module_init(aesd_init_module);
 module_exit(aesd_cleanup_module);
+
+/**
+ * Helper: Calculate total bytes in circular buffer
+ */
+static size_t calculate_total_size(struct aesd_dev *dev)
+{
+    size_t total_size = 0;
+    uint8_t index;
+    struct aesd_buffer_entry *entry;
+
+    AESD_CIRCULAR_BUFFER_FOREACH(entry, &dev->buffer, index) {
+        if (entry->buffptr) {
+            total_size = total_size + entry->size;
+        }
+    }
+
+    return total_size;
+}
+
+/**
+ * Helper: Calculate new position based on seek type
+ */
+static loff_t calculate_new_position(struct aesd_dev *dev, loff_t current_pos,
+                                     loff_t offset, int whence)
+{
+    size_t total_size = calculate_total_size(dev);
+    loff_t new_pos = 0;
+
+    switch (whence) {
+        case SEEK_SET:
+            new_pos = offset;
+            break;
+        case SEEK_CUR:
+            new_pos = current_pos + offset;
+            break;
+        case SEEK_END:
+            new_pos = total_size + offset;
+            break;
+        default:
+            return -EINVAL;
+    }
+
+    if (new_pos < 0 || new_pos > total_size) {
+        return -EINVAL;
+    }
+
+    return new_pos;
+}
+
+loff_t aesd_llseek(struct file *filp, loff_t offset, int whence)
+{
+    struct aesd_dev *dev = filp->private_data;
+    loff_t new_pos;
+
+    PDEBUG("llseek offset %lld, whence %d", offset, whence);
+
+    if (mutex_lock_interruptible(&dev->lock)) {
+        return -ERESTARTSYS;
+    }
+
+    new_pos = calculate_new_position(dev, filp->f_pos, offset, whence);
+
+    if (new_pos < 0) {
+        mutex_unlock(&dev->lock);
+        return new_pos;
+    }
+    filp->f_pos = new_pos;
+    mutex_unlock(&dev->lock);
+    return new_pos;
+}
+
+/**
+ * Helper: Convert command index and offset to file position
+ */
+static loff_t seek_to_position(struct aesd_dev *dev, unsigned int cmd_index, unsigned int cmd_offset)
+{
+    uint8_t index;
+    struct aesd_buffer_entry *entry;
+    loff_t pos = 0;
+    uint8_t current_cmd = 0;
+
+    AESD_CIRCULAR_BUFFER_FOREACH(entry, &dev->buffer, index) {
+        if (!entry->buffptr) {
+            continue;
+        }
+
+        if (current_cmd == cmd_index) {
+            if (cmd_offset < entry->size) {
+                return pos + cmd_offset;
+            } else {
+                return -EINVAL;
+            }
+        }
+
+        pos = pos + entry->size;
+        current_cmd = current_cmd + 1;
+    }
+
+    return -EINVAL;
+}
+
+long aesd_unlocked_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
+{
+    struct aesd_dev *dev = filp->private_data;
+    struct aesd_seekto seek_params;
+    loff_t new_pos;
+
+    PDEBUG("ioctl cmd %u, arg %lu", cmd, arg);
+
+    if (cmd != AESDCHAR_IOCSEEKTO) {
+        return -ENOTTY;
+    }
+
+    if (mutex_lock_interruptible(&dev->lock)) {
+        return -ERESTARTSYS;
+    }
+
+    if (copy_from_user(&seek_params, (void __user *)arg, sizeof(seek_params)) != 0) {
+        mutex_unlock(&dev->lock);
+        return -EFAULT;
+    }
+
+    new_pos = seek_to_position(dev, seek_params.write_cmd, seek_params.write_cmd_offset);
+
+    if (new_pos < 0) {
+        mutex_unlock(&dev->lock);
+        return new_pos;
+    }
+
+    filp->f_pos = new_pos;
+    mutex_unlock(&dev->lock);
+    return 0;
+}
+
+struct file_operations aesd_fops = {
+    .owner =          THIS_MODULE,
+    .llseek =         aesd_llseek,
+    .unlocked_ioctl = aesd_unlocked_ioctl,
+    .read =           aesd_read,
+    .write =          aesd_write,
+    .open =           aesd_open,
+    .release =        aesd_release,
+};
+
+static int aesd_setup_cdev(struct aesd_dev *dev)
+{
+    int err, devno = MKDEV(aesd_major, aesd_minor);
+
+    cdev_init(&dev->cdev, &aesd_fops);
+    dev->cdev.owner = THIS_MODULE;
+    dev->cdev.ops = &aesd_fops;
+    err = cdev_add(&dev->cdev, devno, 1);
+    if (err) {
+        printk(KERN_ERR "Error %d adding aesd cdev", err);
+    }
+    return err;
+}
