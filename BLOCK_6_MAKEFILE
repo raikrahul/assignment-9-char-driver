@@ -1,0 +1,44 @@
+# BLOCK 6: THE MAKEFILE
+# 
+# AXIOM: Kernel modules need special build system
+# AXIOM: We use Kbuild infrastructure
+
+# AXIOM: Name of the module file that will be generated
+# Result: aesdchar.ko (kernel object)
+obj-m := aesdchar.o
+
+# AXIOM: If aesdchar.c includes other .c files, list them here
+# Example: aesdchar-objs := aesdchar_main.o aesd-circular-buffer.o
+aesdchar-objs := aesdchar.o aesd-circular-buffer.o
+
+# AXIOM: Kernel source directory
+# Can be overridden from command line: make KERNELDIR=/path/to/linux
+KERNELDIR ?= /lib/modules/$(shell uname -r)/build
+
+# AXIOM: Current directory
+PWD := $(shell pwd)
+
+# AXIOM: Default target - build the module
+all:
+	$(MAKE) -C $(KERNELDIR) M=$(PWD) modules
+
+# AXIOM: Clean target - remove generated files
+clean:
+	$(MAKE) -C $(KERNELDIR) M=$(PWD) clean
+
+# AXIOM: Load module (requires sudo)
+load:
+	sudo insmod aesdchar.ko
+
+# AXIOM: Unload module (requires sudo)
+unload:
+	sudo rmmod aesdchar
+
+# AXIOM: Show kernel messages
+logs:
+	sudo dmesg | tail -20
+
+# AXIOM: Create device node (if not using udev)
+mknod:
+	sudo mknod /dev/aesdchar c $$(cat /proc/devices | grep aesdchar | awk '{print $$1}') 0
+

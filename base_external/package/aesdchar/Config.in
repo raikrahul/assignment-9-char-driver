@@ -1,0 +1,7 @@
+
+config BR2_PACKAGE_AESDCHAR
+	bool "aesdchar"
+	depends on BR2_LINUX_KERNEL
+	help
+	  AESD character driver for assignment 8.
+	  Provides /dev/aesdchar device for socket communication.
