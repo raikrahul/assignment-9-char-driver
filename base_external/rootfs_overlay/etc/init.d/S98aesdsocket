@@ -1,0 +1,52 @@
+#!/bin/sh
+
+# aesdsocket server init script
+# Starts/stops the aesdsocket daemon
+
+daemon="/usr/bin/aesdsocket"
+pidfile="/var/run/aesdsocket.pid"
+
+case "$1" in
+    start)
+        echo "Starting aesdsocket server..."
+        
+        if [ -f "$pidfile" ] && kill -0 $(cat "$pidfile") 2>/dev/null; then
+            echo "aesdsocket is already running"
+            exit 0
+        fi
+        
+        # Start the daemon in background
+        start-stop-daemon -S -x "$daemon" -p "$pidfile" -b -m
+        
+        if [ $? -eq 0 ]; then
+            echo "aesdsocket started successfully"
+        else
+            echo "Failed to start aesdsocket"
+            exit 1
+        fi
+        ;;
+        
+    stop)
+        echo "Stopping aesdsocket server..."
+        
+        if [ -f "$pidfile" ]; then
+            start-stop-daemon -K -p "$pidfile" -x "$daemon"
+            rm -f "$pidfile"
+            echo "aesdsocket stopped"
+        else
+            echo "aesdsocket is not running"
+        fi
+        ;;
+        
+    restart)
+        $0 stop
+        $0 start
+        ;;
+        
+    *)
+        echo "Usage: $0 {start|stop|restart}"
+        exit 1
+        ;;
+esac
+
+exit 0
